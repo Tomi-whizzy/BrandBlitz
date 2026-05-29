@@ -4,7 +4,9 @@ void initSentry();
 import { connectDb, closeDb } from "./db";
 import { connectRedis, redis, startRedisEvictionMonitor } from "./lib/redis";
 import { createPayoutWorker } from "./queues/processors/payout.processor";
+import { createArchiveWorker, scheduleArchiveJob } from "./queues/archive.queue";
 import { createLeagueWorker } from "./queues/processors/league.processor";
+import { createGdprErasureWorker } from "./queues/processors/gdpr-erasure.processor";
 import { ensureLeagueRepeatableJobs } from "./queues/league.queue";
 import { drainSharedAgent } from "@brandblitz/stellar";
 import { logger } from "./lib/logger";
@@ -14,16 +16,21 @@ async function startWorker(): Promise<void> {
   await connectRedis();
 
   const payoutWorker = createPayoutWorker();
+  const archiveWorker = createArchiveWorker();
   const leagueWorker = createLeagueWorker();
+  const gdprErasureWorker = createGdprErasureWorker();
+  await scheduleArchiveJob();
   await ensureLeagueRepeatableJobs();
   const evictionMonitor = startRedisEvictionMonitor();
-  logger.info("BullMQ worker started — processing payout + league jobs");
+  logger.info("BullMQ worker started — processing payout + archive + league + gdpr-erasure jobs");
 
   const shutdown = async (signal: string) => {
     logger.info(`${signal} received — closing worker`);
     clearInterval(evictionMonitor);
     await payoutWorker.close();
+    await archiveWorker.close();
     await leagueWorker.close();
+    await gdprErasureWorker.close();
     await closeDb();
     await redis.disconnect();
     drainSharedAgent();
